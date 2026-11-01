@@ -29,7 +29,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/effect-process.h"
 #include "core/safety.h"
+#include "effects/effects-list.h"
 #include "effects/reverb/freeverb.h"
 
 /* ------------------------------------------------------------------------- */
@@ -452,6 +454,339 @@ static void test_freeverb_mono(void)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Contrato de efectos y motor de procesamiento                               */
+
+/* Efectos de prueba: uno que no se puede crear y uno que produce NaN. */
+
+static void *fake_create_fails(uint32_t sample_rate)
+{
+	(void)sample_rate;
+	return NULL;
+}
+
+static int g_fake_state = 0;
+static int g_fake_clears = 0;
+
+static void *fake_create_ok(uint32_t sample_rate)
+{
+	(void)sample_rate;
+	return &g_fake_state;
+}
+
+static void fake_destroy(void *state)
+{
+	(void)state;
+}
+
+static void fake_set_params(void *state, const float *values)
+{
+	(void)state;
+	(void)values;
+}
+
+static void fake_clear(void *state)
+{
+	(void)state;
+	g_fake_clears++;
+}
+
+static void fake_process_nan(void *state, const float *in_left, const float *in_right, float *out_left,
+			     float *out_right, size_t frames)
+{
+	(void)state;
+	(void)in_left;
+	(void)in_right;
+	for (size_t i = 0; i < frames; i++) {
+		out_left[i] = make_nan();
+		if (out_right)
+			out_right[i] = make_nan();
+	}
+}
+
+static const struct vfx_param_info fake_params[1] = {
+	{"level", "Fake.Level", 0.0, 1.0, 0.5, 0.1, NULL},
+};
+
+static struct vfx_effect_info make_fake_info(void)
+{
+	struct vfx_effect_info info = {
+		.id = "fake",
+		.name_key = "Fake.Name",
+		.mix_mode = VFX_MIX_ADDITIVE,
+		.params = fake_params,
+		.num_params = 1,
+		.create = fake_create_ok,
+		.destroy = fake_destroy,
+		.set_params = fake_set_params,
+		.clear = fake_clear,
+		.process = fake_process_nan,
+	};
+	return info;
+}
+
+static void test_effect_info_validation(void)
+{
+	printf("vfx_effect_info_is_valid (descripciones correctas e incorrectas)\n");
+
+	struct vfx_effect_info ok = make_fake_info();
+	CHECK(vfx_effect_info_is_valid(&ok));
+	CHECK(!vfx_effect_info_is_valid(NULL));
+
+	struct vfx_effect_info bad = ok;
+	bad.id = NULL;
+	CHECK(!vfx_effect_info_is_valid(&bad));
+
+	bad = ok;
+	bad.process = NULL;
+	CHECK(!vfx_effect_info_is_valid(&bad));
+
+	bad = ok;
+	bad.num_params = VFX_MAX_PARAMS + 1;
+	CHECK(!vfx_effect_info_is_valid(&bad));
+
+	bad = ok;
+	bad.mix_mode = (enum vfx_mix_mode)7;
+	CHECK(!vfx_effect_info_is_valid(&bad));
+
+	/* Rangos invalidos y claves repetidas. */
+	struct vfx_param_info params[2];
+	params[0] = fake_params[0];
+	params[1] = fake_params[0];
+	bad = ok;
+	bad.params = params;
+	bad.num_params = 2;
+	CHECK(!vfx_effect_info_is_valid(&bad)); /* clave "level" repetida */
+
+	params[1].key = "other";
+	CHECK(vfx_effect_info_is_valid(&bad));
+
+	params[1].default_value = 5.0; /* fuera de [0, 1] */
+	CHECK(!vfx_effect_info_is_valid(&bad));
+
+	params[1].default_value = 0.5;
+	params[1].min = 2.0; /* min > max */
+	CHECK(!vfx_effect_info_is_valid(&bad));
+
+	params[1].min = 0.0;
+	params[1].step = 0.0;
+	CHECK(!vfx_effect_info_is_valid(&bad));
+
+	params[1].step = 0.1;
+	params[1].max = (double)make_nan();
+	CHECK(!vfx_effect_info_is_valid(&bad));
+}
+
+static void test_all_effects_follow_contract(void)
+{
+	size_t count = 0;
+	const struct vfx_effect_info *const *effects = vfx_get_effects(&count);
+
+	printf("todos los efectos de la lista cumplen el contrato (%zu efecto/s)\n", count);
+	CHECK(count > 0);
+
+	for (size_t e = 0; e < count; e++) {
+		const struct vfx_effect_info *info = effects[e];
+		CHECK(vfx_effect_info_is_valid(info));
+
+		/* Los id de filtro no se pueden repetir entre efectos. */
+		for (size_t k = 0; k < e; k++)
+			CHECK(strcmp(info->id, effects[k]->id) != 0);
+
+		const uint32_t rates[] = {44100u, 48000u};
+		for (size_t r = 0; r < 2; r++) {
+			struct vfx_processor *p = malloc(sizeof(*p));
+			CHECK(p != NULL);
+			if (!p)
+				continue;
+
+			CHECK(vfx_processor_init(p, info, rates[r]));
+
+			/* 2 segundos de ruido con algunos valores invalidos en la entrada. */
+			static float l[TEST_BLOCK], rr[TEST_BLOCK];
+			bool finite = true;
+			for (int b = 0; b < 20; b++) {
+				for (int i = 0; i < TEST_BLOCK; i++) {
+					l[i] = rand_range(-0.9f, 0.9f);
+					rr[i] = rand_range(-0.9f, 0.9f);
+				}
+				if (b == 3)
+					l[10] = make_nan();
+				vfx_processor_run(p, l, rr, TEST_BLOCK);
+				for (int i = 0; i < TEST_BLOCK; i++) {
+					if ((b != 3 || i != 10) && (!isfinite(l[i]) || !isfinite(rr[i])))
+						finite = false;
+				}
+			}
+			CHECK(finite);
+
+			/* Parametros basura: se corrigen solos, sin romper nada. */
+			float junk[VFX_MAX_PARAMS];
+			for (int i = 0; i < VFX_MAX_PARAMS; i++)
+				junk[i] = (i % 2) ? make_nan() : 1.0e9f;
+			vfx_processor_set_params(p, junk);
+			vfx_processor_run(p, l, rr, TEST_BLOCK);
+			CHECK(all_finite(l, TEST_BLOCK));
+
+			vfx_processor_free(p);
+			vfx_processor_free(p); /* dos veces: no debe romper */
+			free(p);
+		}
+	}
+}
+
+/* Copia el audio, lo procesa y devuelve si quedo bit a bit igual. */
+static bool run_and_compare(struct vfx_processor *p, size_t frames, bool stereo)
+{
+	float *l = malloc(frames * sizeof(float));
+	float *r = malloc(frames * sizeof(float));
+	float *l0 = malloc(frames * sizeof(float));
+	float *r0 = malloc(frames * sizeof(float));
+	bool same = false;
+
+	if (l && r && l0 && r0) {
+		for (size_t i = 0; i < frames; i++) {
+			l[i] = l0[i] = rand_range(-1.5f, 1.5f);
+			r[i] = r0[i] = rand_range(-1.5f, 1.5f);
+		}
+		vfx_processor_run(p, l, stereo ? r : NULL, frames);
+		same = memcmp(l, l0, frames * sizeof(float)) == 0 && memcmp(r, r0, frames * sizeof(float)) == 0;
+	}
+
+	free(l);
+	free(r);
+	free(l0);
+	free(r0);
+	return same;
+}
+
+static void test_processor_voice_untouched(void)
+{
+	printf("motor + reverb: con cantidad 0 %%, la voz sale bit a bit identica\n");
+	struct vfx_processor *p = malloc(sizeof(*p));
+	CHECK(p != NULL);
+	if (!p)
+		return;
+
+	CHECK(vfx_processor_init(p, &vfx_effect_reverb, TEST_RATE));
+
+	/* Orden de los deslizadores de la reverb: cantidad, sala, amortiguacion, ancho. */
+	float values[4] = {0.0f, 80.0f, 30.0f, 100.0f};
+	vfx_processor_set_params(p, values);
+
+	/* Tamanos de bloque raros para probar el corte en bloques internos. */
+	const size_t sizes[] = {1, 7, 1023, 1024, 1025, 4800, 10000};
+	bool all_same = true;
+	for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+		all_same = all_same && run_and_compare(p, sizes[i], true);
+		all_same = all_same && run_and_compare(p, sizes[i], false);
+	}
+	CHECK(all_same);
+
+	/* Con cantidad normal, el audio cambia (hay reverb) y respeta el techo. */
+	values[0] = 20.0f;
+	vfx_processor_set_params(p, values);
+
+	static float l[TEST_BLOCK], r[TEST_BLOCK], l0[TEST_BLOCK];
+	bool changed = false, within = true;
+	for (int b = 0; b < 10; b++) {
+		for (int i = 0; i < TEST_BLOCK; i++) {
+			l[i] = l0[i] = rand_range(-1.2f, 1.2f);
+			r[i] = rand_range(-1.2f, 1.2f);
+		}
+		vfx_processor_run(p, l, r, TEST_BLOCK);
+		for (int i = 0; i < TEST_BLOCK; i++) {
+			float limit = fabsf(l0[i]) > VFX_CEILING ? fabsf(l0[i]) : VFX_CEILING;
+			if (l[i] != l0[i])
+				changed = true;
+			if (fabsf(l[i]) > limit)
+				within = false;
+		}
+	}
+	CHECK(changed);
+	CHECK(within);
+
+	vfx_processor_free(p);
+	free(p);
+}
+
+static void test_processor_failures(void)
+{
+	printf("motor: efecto que no se crea o que produce NaN deja pasar la voz\n");
+	struct vfx_processor *p = malloc(sizeof(*p));
+	CHECK(p != NULL);
+	if (!p)
+		return;
+
+	/* Efecto que no se puede crear. */
+	struct vfx_effect_info fails = make_fake_info();
+	fails.create = fake_create_fails;
+	CHECK(vfx_processor_init(p, &fails, TEST_RATE) == false);
+	CHECK(run_and_compare(p, 3000, true));
+	vfx_processor_free(p);
+
+	/* Descripcion invalida: tampoco se crea. */
+	struct vfx_effect_info invalid = make_fake_info();
+	invalid.clear = NULL;
+	CHECK(vfx_processor_init(p, &invalid, TEST_RATE) == false);
+	CHECK(run_and_compare(p, 3000, true));
+	vfx_processor_free(p);
+
+	/* Efecto que produce NaN: pasa la voz, se avisa y se reinicia. */
+	struct vfx_effect_info nan_fx = make_fake_info();
+	g_fake_clears = 0;
+	CHECK(vfx_processor_init(p, &nan_fx, TEST_RATE));
+
+	static float l[3000], r[3000], l0[3000], r0[3000];
+	for (int i = 0; i < 3000; i++) {
+		l[i] = l0[i] = rand_range(-1.0f, 1.0f);
+		r[i] = r0[i] = rand_range(-1.0f, 1.0f);
+	}
+	CHECK(vfx_processor_run(p, l, r, 3000) == true);
+	CHECK(memcmp(l, l0, sizeof(l)) == 0);
+	CHECK(memcmp(r, r0, sizeof(r)) == 0);
+	CHECK(g_fake_clears == 3); /* 3000 muestras = 3 bloques, se reinicia en cada uno */
+
+	vfx_processor_free(p);
+	free(p);
+}
+
+static void test_reverb_level(void)
+{
+	printf("reverb con valores por defecto: nivel del efecto respecto de la voz\n");
+	struct vfx_processor *p = malloc(sizeof(*p));
+	CHECK(p != NULL);
+	if (!p)
+		return;
+	CHECK(vfx_processor_init(p, &vfx_effect_reverb, TEST_RATE));
+
+	/* Ruido a -20 dBFS durante 3 segundos; se mide el ultimo segundo. */
+	static float l[TEST_BLOCK], r[TEST_BLOCK], l0[TEST_BLOCK];
+	double dry_e = 0.0, wet_e = 0.0;
+	for (int b = 0; b < 30; b++) {
+		for (int i = 0; i < TEST_BLOCK; i++) {
+			l[i] = l0[i] = rand_range(-0.17f, 0.17f);
+			r[i] = rand_range(-0.17f, 0.17f);
+		}
+		vfx_processor_run(p, l, r, TEST_BLOCK);
+		if (b >= 20) {
+			for (int i = 0; i < TEST_BLOCK; i++) {
+				double wet = (double)l[i] - (double)l0[i];
+				dry_e += (double)l0[i] * (double)l0[i];
+				wet_e += wet * wet;
+			}
+		}
+	}
+
+	double ratio_db = 10.0 * log10(wet_e / dry_e);
+	printf("  reverb a %.1f dB respecto de la voz\n", ratio_db);
+	CHECK(ratio_db < 0.0);   /* la reverb queda por debajo de la voz */
+	CHECK(ratio_db > -30.0); /* pero se escucha */
+
+	vfx_processor_free(p);
+	free(p);
+}
+
+/* ------------------------------------------------------------------------- */
 
 int main(void)
 {
@@ -470,6 +805,12 @@ int main(void)
 	test_freeverb_invalid_input();
 	test_freeverb_amount_zero_and_clear();
 	test_freeverb_mono();
+
+	test_effect_info_validation();
+	test_all_effects_follow_contract();
+	test_processor_voice_untouched();
+	test_processor_failures();
+	test_reverb_level();
 
 	printf("\n%d comprobaciones, %d fallos\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

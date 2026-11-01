@@ -125,17 +125,32 @@ function(vfx_apply_settings target)
 endfunction()
 
 # -----------------------------------------------------------------------------
+# Procesamiento de audio (no usa OBS): lo comparten el plugin y las pruebas
+#
+# Para agregar un efecto nuevo, sumar aca su(s) archivo(s) .c
+# -----------------------------------------------------------------------------
+
+add_library(vfx-dsp STATIC
+    src/core/effect-process.c
+    src/effects/effects-list.c
+    src/effects/reverb/freeverb.c
+    src/effects/reverb/reverb.c
+)
+
+vfx_apply_settings(vfx-dsp)
+
+# -----------------------------------------------------------------------------
 # El plugin
 # -----------------------------------------------------------------------------
 
 add_library(${PROJECT_NAME} MODULE
     src/plugin-main.c
-    src/effects/reverb/freeverb.c
 )
 
 vfx_apply_settings(${PROJECT_NAME})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+    vfx-dsp
     OBS::libobs
 )
 
@@ -158,10 +173,13 @@ if(VFX_BUILD_TESTS)
 
     add_executable(test-dsp
         tests/test-dsp.c
-        src/effects/reverb/freeverb.c
     )
 
     vfx_apply_settings(test-dsp)
+
+    target_link_libraries(test-dsp PRIVATE
+        vfx-dsp
+    )
 
     add_test(NAME test-dsp COMMAND test-dsp)
 endif()
