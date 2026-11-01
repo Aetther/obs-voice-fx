@@ -130,6 +130,7 @@ endfunction()
 
 add_library(${PROJECT_NAME} MODULE
     src/plugin-main.c
+    src/effects/reverb/freeverb.c
 )
 
 vfx_apply_settings(${PROJECT_NAME})
@@ -157,6 +158,7 @@ if(VFX_BUILD_TESTS)
 
     add_executable(test-dsp
         tests/test-dsp.c
+        src/effects/reverb/freeverb.c
     )
 
     vfx_apply_settings(test-dsp)
