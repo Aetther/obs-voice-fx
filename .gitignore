@@ -1,0 +1,21 @@
+# Dependencias generadas por scripts/preparar-deps.ps1
+# (headers de OBS y obs.lib: cada uno las genera en su PC)
+/deps/
+
+# Salida del compilador
+/build/
+/out/
+
+# Paquetes para publicar en Releases
+/release/
+*.zip
+
+# Visual Studio y VS Code (configuracion local de cada persona)
+/.vs/
+/.vscode/
+*.user
+*.suo
+
+# Archivos de Windows
+Thumbs.db
+desktop.ini
