@@ -19,7 +19,8 @@ cmake_minimum_required(VERSION 3.25)
 project(obs-voice-fx
     VERSION 0.1.0
     DESCRIPTION "Efectos de voz para OBS Studio con atajos de teclado"
-    LANGUAGES C
+    HOMEPAGE_URL "https://github.com/Aetther/obs-voice-fx"
+    LANGUAGES C CXX
 )
 
 option(VFX_BUILD_TESTS "Compilar las pruebas de audio (no necesitan OBS)" ON)
@@ -43,8 +44,14 @@ endif()
 set(OBS_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps" CACHE PATH "Carpeta con los headers de libobs y obs.lib")
 set(OBS_INCLUDE_DIR "${OBS_DEPS_DIR}/include")
 set(OBS_IMPORT_LIB "${OBS_DEPS_DIR}/lib/obs.lib")
+set(OBS_FRONTEND_IMPORT_LIB "${OBS_DEPS_DIR}/lib/obs-frontend-api.lib")
+set(OBS_QT_DIR "${OBS_DEPS_DIR}/qt6")
 
-if(NOT EXISTS "${OBS_INCLUDE_DIR}/obs-module.h" OR NOT EXISTS "${OBS_IMPORT_LIB}")
+if(NOT EXISTS "${OBS_INCLUDE_DIR}/obs-module.h"
+   OR NOT EXISTS "${OBS_INCLUDE_DIR}/obs-frontend-api.h"
+   OR NOT EXISTS "${OBS_IMPORT_LIB}"
+   OR NOT EXISTS "${OBS_FRONTEND_IMPORT_LIB}"
+   OR NOT EXISTS "${OBS_QT_DIR}/lib/cmake/Qt6/Qt6Config.cmake")
     message(FATAL_ERROR
         "Faltan las dependencias de OBS en '${OBS_DEPS_DIR}'.\n"
         "Ejecuta primero:\n"
@@ -68,13 +75,30 @@ set_target_properties(OBS::libobs PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${OBS_INCLUDE_DIR}"
 )
 
+# obs-frontend-api: lo que permite agregar el panel a la ventana de OBS.
+add_library(OBS::frontend-api UNKNOWN IMPORTED)
+set_target_properties(OBS::frontend-api PROPERTIES
+    IMPORTED_LOCATION "${OBS_FRONTEND_IMPORT_LIB}"
+    INTERFACE_INCLUDE_DIRECTORIES "${OBS_INCLUDE_DIR}"
+)
+
+# Qt 6: solo el que descargo y verifico el script (nunca otro Qt instalado en la PC).
+find_package(Qt6 6.11 REQUIRED
+    COMPONENTS Core Gui Widgets
+    CONFIG
+    PATHS "${OBS_QT_DIR}"
+    NO_DEFAULT_PATH
+)
+
 # -----------------------------------------------------------------------------
 # Opciones generales de compilacion
 # -----------------------------------------------------------------------------
 
-# Runtime de C incluido dentro del DLL: no depende de que el usuario tenga
-# instalada una version concreta de "Visual C++ Redistributable".
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+# Runtime de C/C++ compartido (/MD), el mismo que usan OBS y Qt.
+# Es obligatorio para mezclar nuestro codigo con Qt sin problemas de memoria.
+# OBS ya necesita "Visual C++ Redistributable" para funcionar, asi que no
+# agrega ningun requisito nuevo para el usuario.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
 # Archivo .pdb con simbolos de depuracion (sirve para analizar un cierre de OBS).
 set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "ProgramDatabase")
@@ -100,6 +124,9 @@ function(vfx_apply_settings target)
         C_STANDARD 17
         C_STANDARD_REQUIRED ON
         C_EXTENSIONS OFF
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
         COMPILE_WARNING_AS_ERROR ON
     )
 
@@ -111,6 +138,9 @@ function(vfx_apply_settings target)
         /guard:cf           # Control Flow Guard
         /GS                 # proteccion de la pila (stack cookies)
         /MP                 # compila varios archivos en paralelo
+        $<$<COMPILE_LANGUAGE:CXX>:/permissive->       # C++ estricto
+        $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>    # version de C++ correcta (lo pide Qt)
+        $<$<COMPILE_LANGUAGE:CXX>:/EHsc>              # manejo de excepciones estandar
     )
 
     target_link_options(${target} PRIVATE
@@ -145,6 +175,9 @@ vfx_apply_settings(vfx-dsp)
 
 add_library(${PROJECT_NAME} MODULE
     src/plugin-main.c
+    src/core/effect-control.c
+    src/core/effect-filter.c
+    src/ui/vfx-dock.cpp
 )
 
 vfx_apply_settings(${PROJECT_NAME})
@@ -152,6 +185,10 @@ vfx_apply_settings(${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME} PRIVATE
     vfx-dsp
     OBS::libobs
+    OBS::frontend-api
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
@@ -185,10 +222,25 @@ if(VFX_BUILD_TESTS)
 endif()
 
 # -----------------------------------------------------------------------------
+# Ficha del plugin para OBS (Herramientas -> Administrador de plugins)
+#
+# OBS 33 lee data/manifest.json y muestra la version. Se genera desde
+# cmake/manifest.json.in con la version de project(), asi nunca queda vieja.
+# -----------------------------------------------------------------------------
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/manifest.json.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/manifest.json"
+    @ONLY
+)
+
+# -----------------------------------------------------------------------------
 # Instalacion: formato nuevo de OBS 33
 #
 #   <prefijo>/obs-voice-fx/obs-voice-fx.dll
-#   <prefijo>/obs-voice-fx/data/...
+#   <prefijo>/obs-voice-fx/LICENSE
+#   <prefijo>/obs-voice-fx/data/manifest.json
+#   <prefijo>/obs-voice-fx/data/locale/...
 #
 # Las pruebas no se instalan.
 # -----------------------------------------------------------------------------
@@ -200,4 +252,13 @@ install(TARGETS ${PROJECT_NAME}
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/"
     DESTINATION "${PROJECT_NAME}/data"
+)
+
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/manifest.json"
+    DESTINATION "${PROJECT_NAME}/data"
+)
+
+# La licencia viaja con el plugin (lo pide la GPL al distribuir el programa).
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    DESTINATION "${PROJECT_NAME}"
 )

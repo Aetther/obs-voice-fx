@@ -1,0 +1,16 @@
+{
+    "id": "@PROJECT_NAME@",
+    "name": "@PROJECT_NAME@",
+    "display_name": "OBS Voice FX",
+    "version": "@PROJECT_VERSION@",
+    "os_arch": "windows-x64",
+    "description": "Voice effects (reverb and more) with on/off hotkeys.",
+    "long_description": "Adds voice effects that are heard only in the OBS output (stream and recording). Each effect has a dockable panel and a user-assignable hotkey. The voice volume is never changed: the effect is added underneath it.",
+    "urls": {
+        "repository": "@PROJECT_HOMEPAGE_URL@",
+        "website": "@PROJECT_HOMEPAGE_URL@",
+        "support": "@PROJECT_HOMEPAGE_URL@/issues"
+    },
+    "has_banner": false,
+    "has_icon": false
+}
