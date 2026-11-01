@@ -26,6 +26,8 @@ Plugin para **OBS Studio** que agrega efectos a tu voz, empezando por la **rever
 
 ## Instalación
 
+> **Guía paso a paso en PDF, con capturas:** [Español](https://github.com/Aetther/obs-voice-fx/releases/latest/download/OBS-Voice-FX-Guia-de-instalacion.pdf) · [English](https://github.com/Aetther/obs-voice-fx/releases/latest/download/OBS-Voice-FX-Installation-Guide-EN.pdf)
+
 1. Descargá **`obs-voice-fx-0.1.0-windows-x64.zip`** desde la sección [**Releases**](https://github.com/Aetther/obs-voice-fx/releases) del repositorio.
    > No uses el botón verde **Code → Download ZIP**: eso baja el código fuente, no el plugin listo para usar.
 2. **Cerrá OBS.**

@@ -26,6 +26,8 @@ An **OBS Studio** plugin that adds voice effects, starting with **reverb**. Each
 
 ## Installation
 
+> **Step-by-step PDF guide with screenshots:** [English](https://github.com/Aetther/obs-voice-fx/releases/latest/download/OBS-Voice-FX-Installation-Guide-EN.pdf) · [Español](https://github.com/Aetther/obs-voice-fx/releases/latest/download/OBS-Voice-FX-Guia-de-instalacion.pdf)
+
 1. Download **`obs-voice-fx-0.1.0-windows-x64.zip`** from the repository [**Releases**](https://github.com/Aetther/obs-voice-fx/releases) page.
    > Don't use the green **Code → Download ZIP** button: that downloads the source code, not the ready-to-use plugin.
 2. **Close OBS.**
