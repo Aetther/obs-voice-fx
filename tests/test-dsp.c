@@ -669,8 +669,12 @@ static void test_processor_voice_untouched(void)
 
 	CHECK(vfx_processor_init(p, &vfx_effect_reverb, TEST_RATE));
 
-	/* Orden de los deslizadores de la reverb: cantidad, sala, amortiguacion, ancho. */
-	float values[4] = {0.0f, 80.0f, 30.0f, 100.0f};
+	/*
+	 * Orden de los deslizadores de la reverb: cantidad, sala, amortiguacion,
+	 * ancho, pre-delay, corte de graves, corte de agudos. El arreglo tiene el
+	 * tamano maximo para no depender de cuantos deslizadores tenga la reverb.
+	 */
+	float values[VFX_MAX_PARAMS] = {0.0f, 80.0f, 30.0f, 100.0f, 40.0f, 150.0f, 6000.0f};
 	vfx_processor_set_params(p, values);
 
 	/* Tamanos de bloque raros para probar el corte en bloques internos. */

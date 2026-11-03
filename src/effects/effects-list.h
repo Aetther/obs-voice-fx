@@ -28,6 +28,7 @@ extern "C" {
 
 /* Cada efecto disponible (definidos en src/effects/<nombre>/<nombre>.c). */
 extern const struct vfx_effect_info vfx_effect_reverb;
+extern const struct vfx_effect_info vfx_effect_echo;
 
 /*
  * Devuelve la lista de todos los efectos del plugin.

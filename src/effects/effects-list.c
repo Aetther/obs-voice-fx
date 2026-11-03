@@ -30,6 +30,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 static const struct vfx_effect_info *const effects[] = {
 	&vfx_effect_reverb,
+	&vfx_effect_echo,
 };
 
 const struct vfx_effect_info *const *vfx_get_effects(size_t *count)

@@ -25,6 +25,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
  * que cambian (core/effect-filter.h). El panel mira ese numero cada 50 ms,
  * algo que no cuesta practicamente nada, y solo si cambio vuelve a leer OBS.
  *
+ * Arriba hay una lista desplegable para elegir que efecto se ve; los que
+ * estan prendidos se marcan con un punto lleno y se nombran en "Activos".
+ *
  * Todo corre en el hilo principal de OBS (el de la interfaz).
  */
 
@@ -52,6 +55,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSlider>
+#include <QStackedWidget>
 #include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -321,6 +325,7 @@ public:
 			}
 		}
 
+		enabled_ = enabled;
 		toggle_->setEnabled(attached);
 		toggle_->setChecked(enabled);
 		toggle_->setText(enabled ? loc("Dock.Enabled") : loc("Dock.Disabled"));
@@ -336,6 +341,11 @@ public:
 		refreshParams(attached);
 		refreshHotkey();
 	}
+
+	const vfx_effect_info *info() const { return info_; }
+
+	/* Si el efecto quedo prendido en la ultima actualizacion. */
+	bool effectEnabled() const { return enabled_; }
 
 private:
 	void addParamRow(QVBoxLayout *layout, size_t index)
@@ -430,6 +440,7 @@ private:
 	HotkeyButton *hotkeyButton_ = nullptr;
 	QPushButton *clearButton_ = nullptr;
 	bool updating_ = false; /* evita reaccionar a cambios hechos por el propio panel */
+	bool enabled_ = false;
 };
 
 void SourceCombo::showPopup()
@@ -467,13 +478,36 @@ void HotkeyButton::handleKey(QKeyEvent *e)
 	owner_->setHotkey(combo);
 }
 
-/* El panel completo: un bloque por efecto, con barra de desplazamiento vertical. */
+/*
+ * El panel completo: lista desplegable de efectos arriba y, abajo, el bloque
+ * del efecto elegido. Barra de desplazamiento vertical si no entra.
+ */
 class VoiceFxDock : public QWidget {
 public:
 	VoiceFxDock()
 	{
 		auto *content = new QWidget();
 		auto *list = new QVBoxLayout(content);
+
+		/* Elegir el efecto que se muestra */
+		auto *effectRow = new QHBoxLayout();
+		auto *effectLabel = new QLabel(loc("Dock.Effect"), content);
+		effectCombo_ = new QComboBox(content);
+		effectCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		effectCombo_->setMinimumContentsLength(6);
+		effectCombo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+		effectRow->addWidget(effectLabel);
+		effectRow->addWidget(effectCombo_, 1);
+		list->addLayout(effectRow);
+
+		/* Efectos prendidos ahora mismo (para verlos de un vistazo en vivo) */
+		active_ = new QLabel(content);
+		active_->setWordWrap(true);
+		list->addWidget(active_);
+
+		/* Un bloque por efecto; solo se ve el elegido */
+		stack_ = new QStackedWidget(content);
+		list->addWidget(stack_);
 
 		size_t count = 0;
 		const vfx_effect_info *const *effects = vfx_get_effects(&count);
@@ -482,9 +516,17 @@ public:
 				continue;
 			auto *box = new EffectBox(effects[i]);
 			boxes_.append(box);
-			list->addWidget(box);
+			stack_->addWidget(box);
+			effectCombo_->addItem(QString());
 		}
 		list->addStretch(1);
+
+		connect(effectCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+			if (index >= 0 && index < stack_->count())
+				stack_->setCurrentIndex(index);
+		});
+
+		refreshSummary();
 
 		auto *scroll = new QScrollArea(this);
 		scroll->setWidgetResizable(true);
@@ -536,8 +578,37 @@ private:
 	{
 		for (EffectBox *box : boxes_)
 			box->refreshState();
+		refreshSummary();
 	}
 
+	/* Marca en la lista los efectos prendidos y arma el texto "Activos: ...". */
+	void refreshSummary()
+	{
+		QStringList active;
+
+		for (int i = 0; i < boxes_.size(); i++) {
+			const EffectBox *box = boxes_[i];
+			const QString name = loc(box->info()->name_key);
+			const bool on = box->effectEnabled();
+
+			/* Punto lleno = prendido, punto vacio = apagado. */
+			const QString text = QString::fromUtf8(on ? "\u25CF  " : "\u25CB  ") + name;
+			if (effectCombo_->itemText(i) != text)
+				effectCombo_->setItemText(i, text);
+
+			if (on)
+				active.append(name);
+		}
+
+		const QString summary = loc("Dock.Active") + QStringLiteral(" ") +
+					(active.isEmpty() ? loc("Dock.ActiveNone") : active.join(QStringLiteral(", ")));
+		if (active_->text() != summary)
+			active_->setText(summary);
+	}
+
+	QComboBox *effectCombo_ = nullptr;
+	QLabel *active_ = nullptr;
+	QStackedWidget *stack_ = nullptr;
 	QList<EffectBox *> boxes_;
 	QTimer *checkTimer_ = nullptr;
 	QTimer *fullTimer_ = nullptr;

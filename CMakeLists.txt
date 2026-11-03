@@ -157,11 +157,15 @@ endfunction()
 # -----------------------------------------------------------------------------
 # Procesamiento de audio (no usa OBS): lo comparten el plugin y las pruebas
 #
+# src/dsp/ tiene las piezas comunes (filtros, lineas de retardo).
 # Para agregar un efecto nuevo, sumar aca su(s) archivo(s) .c
 # -----------------------------------------------------------------------------
 
 add_library(vfx-dsp STATIC
     src/core/effect-process.c
+    src/dsp/biquad.c
+    src/dsp/delay-line.c
+    src/effects/echo/echo.c
     src/effects/effects-list.c
     src/effects/reverb/freeverb.c
     src/effects/reverb/reverb.c
@@ -219,6 +223,32 @@ if(VFX_BUILD_TESTS)
     )
 
     add_test(NAME test-dsp COMMAND test-dsp)
+
+    # Piezas comunes de audio (src/dsp/): filtros y lineas de retardo
+    add_executable(test-blocks
+        tests/test-blocks.c
+    )
+
+    vfx_apply_settings(test-blocks)
+
+    target_link_libraries(test-blocks PRIVATE
+        vfx-dsp
+    )
+
+    add_test(NAME test-blocks COMMAND test-blocks)
+
+    # Comportamiento de cada efecto (lo que se escucha)
+    add_executable(test-effects
+        tests/test-effects.c
+    )
+
+    vfx_apply_settings(test-effects)
+
+    target_link_libraries(test-effects PRIVATE
+        vfx-dsp
+    )
+
+    add_test(NAME test-effects COMMAND test-effects)
 endif()
 
 # -----------------------------------------------------------------------------
